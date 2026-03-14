@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WordSnap Typer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --accent: #7fffb2;
+    --accent2: #ff7f9f;
+    --accent3: #7fb2ff;
+    --text: #e8e8f0;
+    --muted: #5a5a7a;
+    --correct: #7fffb2;
+    --wrong: #ff7f9f;
+    --pending: #3a3a5a;
+    --radius: 16px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  /* Animated background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 20% 20%, rgba(127,255,178,0.06) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 50% at 80% 80%, rgba(127,178,255,0.06) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    width: 100%;
+    max-width: 480px;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: 0 16px 32px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Header */
+  .header {
+    padding: 20px 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .logo span { color: var(--accent); }
+
+  .score-badge {
+    background: var(--surface2);
+    border: 1px solid var(--pending);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--accent);
+  }
+
+  /* Word list pills */
+  .word-list-area {
+    background: var(--surface);
+    border: 1px solid var(--pending);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .word-list-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .word-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 80px;
+    overflow-y: auto;
+  }
+
+  .word-pill {
+    background: var(--surface2);
+    border: 1px solid var(--pending);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-family: 'Space Mono', monospace;
+    color: var(--muted);
+    transition: all 0.2s;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .word-pill.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(127,255,178,0.08);
+  }
+
+  .word-pill.done {
+    border-color: var(--muted);
+    color: var(--muted);
+    text-decoration: line-through;
+    opacity: 0.4;
+  }
+
+  .word-pill.remove-btn {
+    border-color: var(--wrong);
+    color: var(--wrong);
+    opacity: 0.5;
+  }
+
+  /* OCR area */
+  .ocr-area {
+    background: var(--surface);
+    border: 1px solid var(--pending);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+  }
+
+  .ocr-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    flex: 1;
+    line-height: 1.4;
+  }
+
+  .ocr-label strong { color: var(--accent3); display: block; font-size: 0.8rem; }
+
+  .ocr-btn-wrap {
+    position: relative;
+  }
+
+  .ocr-btn {
+    background: linear-gradient(135deg, var(--accent3), #5f8fff);
+    color: #0a0a1a;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: transform 0.15s, opacity 0.15s;
+  }
+
+  .ocr-btn:active { transform: scale(0.95); }
+
+  .ocr-file-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .ocr-status {
+    font-size: 0.7rem;
+    color: var(--accent3);
+    margin-top: 6px;
+    display: none;
+    text-align: center;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .ocr-status.visible { display: block; }
+
+  .ocr-progress {
+    height: 2px;
+    background: var(--pending);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 4px;
+    display: none;
+  }
+
+  .ocr-progress.visible { display: block; }
+
+  .ocr-progress-bar {
+    height: 100%;
+    background: var(--accent3);
+    width: 0%;
+    transition: width 0.3s;
+  }
+
+  /* Main typing area */
+  .typing-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--pending);
+    border-radius: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    min-height: 260px;
+    transition: border-color 0.3s;
+  }
+
+  .typing-card:focus { outline: none; }
+
+  .typing-card.correct-flash {
+    animation: correctFlash 0.4s ease;
+  }
+
+  @keyframes correctFlash {
+    0% { border-color: var(--pending); }
+    40% { border-color: var(--accent); box-shadow: 0 0 40px rgba(127,255,178,0.15); }
+    100% { border-color: var(--pending); }
+  }
+
+  .word-counter {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    font-size: 0.7rem;
+    font-family: 'Space Mono', monospace;
+    color: var(--muted);
+  }
+
+  .tap-hint {
+    position: absolute;
+    top: 16px;
+    left: 20px;
+    font-size: 0.65rem;
+    color: var(--muted);
+    opacity: 0.6;
+  }
+
+  .word-display {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 28px;
+    min-height: 80px;
+    align-items: center;
+  }
+
+  .char {
+    font-family: 'Space Mono', monospace;
+    font-size: clamp(2.8rem, 12vw, 4rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    transition: color 0.1s, text-shadow 0.1s;
+    line-height: 1;
+  }
+
+  .char.pending { color: var(--pending); }
+
+  .char.correct {
+    color: var(--correct);
+    text-shadow: 0 0 20px rgba(127,255,178,0.5);
+  }
+
+  .char.wrong {
+    color: var(--wrong);
+    text-shadow: 0 0 20px rgba(255,127,159,0.5);
+    animation: shake 0.2s ease;
+  }
+
+  .char.cursor {
+    border-bottom: 3px solid var(--accent);
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { border-color: var(--accent); }
+    50% { border-color: transparent; }
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+
+  .typing-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    width: 1px;
+    height: 1px;
+    top: 50%;
+    left: 50%;
+    font-size: 16px; /* prevent iOS zoom */
+  }
+
+  .keyboard-hint {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 8px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    margin: 16px 0 8px;
+  }
+
+  .progress-track {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent3));
+    border-radius: 999px;
+    transition: width 0.4s cubic-bezier(0.34,1.56,0.64,1);
+  }
+
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 6px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  /* Complete screen */
+  .complete-screen {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 16px;
+    padding: 32px 0;
+    flex: 1;
+  }
+
+  .complete-screen.visible { display: flex; }
+
+  .complete-emoji {
+    font-size: 4rem;
+    animation: pop 0.5s cubic-bezier(0.34,1.56,0.64,1);
+  }
+
+  @keyframes pop {
+    0% { transform: scale(0); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .complete-title {
+    font-size: 2rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .complete-stats {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .restart-btn {
+    background: linear-gradient(135deg, var(--accent), #4fe89a);
+    color: #0a0a1a;
+    border: none;
+    border-radius: 12px;
+    padding: 14px 32px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+
+  .restart-btn:active { transform: scale(0.96); }
+
+  /* Particles */
+  .particle {
+    position: fixed;
+    pointer-events: none;
+    border-radius: 50%;
+    z-index: 999;
+    animation: particleFly 0.8s ease-out forwards;
+  }
+
+  @keyframes particleFly {
+    0% { transform: translate(0,0) scale(1); opacity: 1; }
+    100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
+  }
+
+  /* No words state */
+  .empty-state {
+    color: var(--muted);
+    text-align: center;
+    font-size: 0.85rem;
+    line-height: 1.7;
+    padding: 20px;
+  }
+
+  .empty-state .arrow { color: var(--accent3); font-size: 1.5rem; display: block; margin-bottom: 8px; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 10px 20px;
+    font-size: 0.8rem;
+    font-family: 'Space Mono', monospace;
+    color: var(--accent);
+    transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    z-index: 1000;
+    white-space: nowrap;
+    max-width: 90vw;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">Word<span>Snap</span> Typer</div>
+    <div class="score-badge" id="scoreBadge">0 / 0</div>
+  </div>
+
+  <!-- Word list -->
+  <div class="word-list-area">
+    <div class="word-list-label">練習リスト</div>
+    <div class="word-pills" id="wordPills"></div>
+  </div>
+
+  <!-- OCR area -->
+  <div class="ocr-area">
+    <div class="ocr-label">
+      <strong>📷 画像から単語を抽出</strong>
+      カメラ撮影 or 画像ファイルを選択
+    </div>
+    <div class="ocr-btn-wrap">
+      <button class="ocr-btn">
+        <span>📷</span> 読み込む
+      </button>
+      <input
+        class="ocr-file-input"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        id="ocrInput"
+      >
+    </div>
+  </div>
+  <div class="ocr-status" id="ocrStatus">OCR処理中...</div>
+  <div class="ocr-progress" id="ocrProgress">
+    <div class="ocr-progress-bar" id="ocrProgressBar"></div>
+  </div>
+
+  <!-- Typing card -->
+  <div class="typing-card" id="typingCard" tabindex="0">
+    <div class="tap-hint" id="tapHint">タップして開始</div>
+    <div class="word-counter" id="wordCounter"></div>
+    <div class="word-display" id="wordDisplay"></div>
+    <div class="keyboard-hint" id="keyboardHint">▲ タップしてキーボード表示</div>
+    <input
+      class="typing-input"
+      type="text"
+      id="typingInput"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      inputmode="text"
+    >
+  </div>
+
+  <!-- Complete screen -->
+  <div class="complete-screen" id="completeScreen">
+    <div class="complete-emoji">🎉</div>
+    <div class="complete-title">Complete!</div>
+    <div class="complete-stats" id="completeStats"></div>
+    <button class="restart-btn" id="restartBtn">もう一度</button>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-wrap">
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <div class="progress-label">
+      <span id="progressText">0 完了</span>
+      <span id="progressPct">0%</span>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let words = ['apple', 'banana', 'orange', 'grape', 'cherry'];
+let currentIndex = 0;
+let typedCount = 0;
+let charIndex = 0;
+let wrongIndices = new Set();
+let sessionScore = 0;
+let isActive = false;
+let startTime = null;
+
+const typingCard = document.getElementById('typingCard');
+const typingInput = document.getElementById('typingInput');
+const wordDisplay = document.getElementById('wordDisplay');
+const wordCounter = document.getElementById('wordCounter');
+const tapHint = document.getElementById('tapHint');
+const keyboardHint = document.getElementById('keyboardHint');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const progressPct = document.getElementById('progressPct');
+const scoreBadge = document.getElementById('scoreBadge');
+const completeScreen = document.getElementById('completeScreen');
+const completeStats = document.getElementById('completeStats');
+const restartBtn = document.getElementById('restartBtn');
+
+// ─── Audio ───────────────────────────────────────────────────────────────────
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new AudioCtx();
+  return audioCtx;
+}
+
+function playCorrectSound() {
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.2);
+  } catch(e) {}
+}
+
+function speakWord(word) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  setTimeout(() => {
+    const utter = new SpeechSynthesisUtterance(word);
+    utter.lang = 'en-US';
+    utter.rate = 0.85;
+    utter.pitch = 1.0;
+    window.speechSynthesis.speak(utter);
+  }, 150);
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function renderWordPills() {
+  const container = document.getElementById('wordPills');
+  if (words.length === 0) {
+    container.innerHTML = '<span style="font-size:0.75rem;color:var(--muted)">単語がありません。画像から追加してください。</span>';
+    return;
+  }
+  container.innerHTML = words.map((w, i) => {
+    let cls = 'word-pill';
+    if (i === currentIndex && isActive) cls += ' active';
+    if (i < currentIndex) cls += ' done';
+    return `<span class="${cls}" onclick="removeWord(${i})" title="タップで削除">${w}</span>`;
+  }).join('');
+}
+
+function renderWord() {
+  if (currentIndex >= words.length) {
+    showComplete();
+    return;
+  }
+  const word = words[currentIndex];
+  wordDisplay.innerHTML = word.split('').map((ch, i) => {
+    let cls = 'char pending';
+    if (i === charIndex) cls += ' cursor';
+    return `<span class="${cls}" data-i="${i}">${ch}</span>`;
+  }).join('');
+  wordCounter.textContent = `${currentIndex + 1} / ${words.length}`;
+  tapHint.style.display = 'none';
+  keyboardHint.textContent = '▲ タップしてキーボード表示';
+}
+
+function updateCharDisplay() {
+  const word = words[currentIndex];
+  const spans = wordDisplay.querySelectorAll('.char');
+  spans.forEach((span, i) => {
+    span.className = 'char';
+    if (i < charIndex) {
+      span.classList.add(wrongIndices.has(i) ? 'wrong' : 'correct');
+    } else if (i === charIndex) {
+      span.classList.add('pending', 'cursor');
+    } else {
+      span.classList.add('pending');
+    }
+  });
+}
+
+// ─── Typing Logic ─────────────────────────────────────────────────────────────
+function focusInput() {
+  typingInput.value = '';
+  typingInput.focus();
+  isActive = true;
+  renderWord();
+}
+
+typingCard.addEventListener('click', () => {
+  if (words.length === 0) return;
+  focusInput();
+});
+
+typingCard.addEventListener('touchstart', (e) => {
+  if (words.length === 0) return;
+  // Don't call focusInput here to avoid double-fire with click
+}, { passive: true });
+
+typingInput.addEventListener('blur', () => {
+  // Re-focus on mobile after short delay if still active
+  if (isActive) {
+    keyboardHint.textContent = '▲ タップしてキーボード再表示';
+  }
+});
+
+typingInput.addEventListener('input', (e) => {
+  if (currentIndex >= words.length) return;
+  const val = typingInput.value;
+  if (val.length === 0) return;
+
+  const ch = val[val.length - 1].toLowerCase();
+  typingInput.value = '';
+
+  const word = words[currentIndex];
+  if (charIndex >= word.length) return;
+
+  const expected = word[charIndex].toLowerCase();
+  if (ch === expected) {
+    charIndex++;
+    updateCharDisplay();
+
+    if (charIndex === word.length) {
+      // Word complete!
+      playCorrectSound();
+      speakWord(word);
+      spawnParticles();
+      typingCard.classList.remove('correct-flash');
+      void typingCard.offsetWidth;
+      typingCard.classList.add('correct-flash');
+      sessionScore++;
+      typedCount++;
+      setTimeout(() => {
+        currentIndex++;
+        charIndex = 0;
+        wrongIndices.clear();
+        if (currentIndex >= words.length) {
+          showComplete();
+        } else {
+          renderWord();
+        }
+        renderWordPills();
+        updateProgress();
+      }, 500);
+    }
+  } else {
+    wrongIndices.add(charIndex);
+    updateCharDisplay();
+    setTimeout(() => {
+      wrongIndices.delete(charIndex);
+      updateCharDisplay();
+    }, 300);
+  }
+});
+
+// Also handle keydown for physical keyboards
+typingInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Backspace' && charIndex > 0) {
+    charIndex--;
+    wrongIndices.delete(charIndex);
+    updateCharDisplay();
+    e.preventDefault();
+  }
+});
+
+// ─── Progress ────────────────────────────────────────────────────────────────
+function updateProgress() {
+  const total = words.length;
+  const done = currentIndex;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  progressFill.style.width = pct + '%';
+  progressText.textContent = `${done} 完了`;
+  progressPct.textContent = pct + '%';
+  scoreBadge.textContent = `${done} / ${total}`;
+}
+
+// ─── Complete ─────────────────────────────────────────────────────────────────
+function showComplete() {
+  isActive = false;
+  typingCard.style.display = 'none';
+  completeScreen.classList.add('visible');
+  const elapsed = startTime ? Math.round((Date.now() - startTime) / 1000) : 0;
+  completeStats.textContent = `${words.length}語 完了 / ${elapsed}秒`;
+  updateProgress();
+}
+
+restartBtn.addEventListener('click', () => {
+  currentIndex = 0;
+  charIndex = 0;
+  wrongIndices.clear();
+  sessionScore = 0;
+  typedCount = 0;
+  startTime = Date.now();
+  isActive = true;
+  completeScreen.classList.remove('visible');
+  typingCard.style.display = '';
+  renderWord();
+  renderWordPills();
+  updateProgress();
+  focusInput();
+});
+
+// ─── Particles ───────────────────────────────────────────────────────────────
+function spawnParticles() {
+  const colors = ['#7fffb2', '#ff7f9f', '#7fb2ff', '#ffe07f'];
+  const rect = typingCard.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+
+  for (let i = 0; i < 12; i++) {
+    const el = document.createElement('div');
+    el.className = 'particle';
+    const size = 6 + Math.random() * 8;
+    const angle = (Math.PI * 2 * i) / 12 + (Math.random() - 0.5) * 0.5;
+    const dist = 60 + Math.random() * 60;
+    const tx = Math.cos(angle) * dist;
+    const ty = Math.sin(angle) * dist;
+    el.style.cssText = `
+      width:${size}px; height:${size}px;
+      background:${colors[Math.floor(Math.random() * colors.length)]};
+      left:${cx - size/2}px; top:${cy - size/2}px;
+      --tx:${tx}px; --ty:${ty}px;
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 800);
+  }
+}
+
+// ─── Word Management ─────────────────────────────────────────────────────────
+function removeWord(idx) {
+  if (!confirm(`"${words[idx]}" を削除しますか？`)) return;
+  words.splice(idx, 1);
+  if (currentIndex > idx) currentIndex--;
+  if (currentIndex >= words.length) currentIndex = Math.max(0, words.length - 1);
+  charIndex = 0;
+  wrongIndices.clear();
+  renderWord();
+  renderWordPills();
+  updateProgress();
+}
+
+// ─── OCR ─────────────────────────────────────────────────────────────────────
+const ocrInput = document.getElementById('ocrInput');
+const ocrStatus = document.getElementById('ocrStatus');
+const ocrProgress = document.getElementById('ocrProgress');
+const ocrProgressBar = document.getElementById('ocrProgressBar');
+
+ocrInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  ocrInput.value = '';
+
+  ocrStatus.textContent = '読み込み中...';
+  ocrStatus.classList.add('visible');
+  ocrProgress.classList.add('visible');
+  ocrProgressBar.style.width = '0%';
+
+  try {
+    const worker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          const pct = Math.round(m.progress * 100);
+          ocrProgressBar.style.width = pct + '%';
+          ocrStatus.textContent = `OCR処理中... ${pct}%`;
+        }
+      }
+    });
+
+    const { data: { text } } = await worker.recognize(file);
+    await worker.terminate();
+
+    // Extract English words (3+ chars, alpha only)
+    const extracted = [...new Set(
+      text.match(/[a-zA-Z]{3,}/g)?.map(w => w.toLowerCase()) || []
+    )].filter(w => w.length <= 15);
+
+    if (extracted.length === 0) {
+      showToast('英単語が見つかりませんでした');
+      ocrStatus.classList.remove('visible');
+      ocrProgress.classList.remove('visible');
+      return;
+    }
+
+    const newWords = extracted.filter(w => !words.includes(w));
+    words.push(...newWords);
+    ocrStatus.textContent = `✓ ${newWords.length}語 追加されました！`;
+    ocrProgressBar.style.width = '100%';
+    setTimeout(() => {
+      ocrStatus.classList.remove('visible');
+      ocrProgress.classList.remove('visible');
+    }, 2000);
+
+    renderWordPills();
+    updateProgress();
+    showToast(`📚 ${newWords.length}語を追加しました`);
+
+    // Auto-start if was idle
+    if (!isActive && currentIndex < words.length) {
+      startTime = Date.now();
+      renderWord();
+      updateProgress();
+    }
+  } catch (err) {
+    ocrStatus.textContent = 'エラー: ' + err.message;
+    setTimeout(() => {
+      ocrStatus.classList.remove('visible');
+      ocrProgress.classList.remove('visible');
+    }, 3000);
+  }
+});
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+function init() {
+  startTime = Date.now();
+  renderWord();
+  renderWordPills();
+  updateProgress();
+
+  // Show empty state if no words
+  if (words.length === 0) {
+    wordDisplay.innerHTML = `<div class="empty-state"><span class="arrow">↑</span>上の「読み込む」から<br>画像を撮影してください</div>`;
+    tapHint.style.display = 'none';
+  }
+}
+
+init();
+</script>
+</body>
+</html>
